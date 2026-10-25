@@ -334,7 +334,7 @@ export function useWatchTogether({ socket, sessionId, localPeerId, peerName }: U
     const ytPlayer = new window.YT.Player(playerContainerRef.current, {
       height: "100%",
       width: "100%",
-      videoId: watchState.videoId || undefined,
+      ...(watchState.videoId ? { videoId: watchState.videoId } : {}),
       playerVars: {
         autoplay: 0,
         controls: 1,

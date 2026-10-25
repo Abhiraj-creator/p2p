@@ -22,11 +22,11 @@ app.use((_req, res, next) => {
   const csp = [
     "default-src 'self'",
     "connect-src 'self' http://localhost:5001 http://localhost:5000 https://p2p-ivac.onrender.com ws://p2p-ivac.onrender.com ws://localhost:5000 ws://localhost:5001",
-    "script-src 'self'",
+    "script-src 'self' https://www.youtube.com https://www.youtube-nocookie.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data:",
     "font-src 'self' https://fonts.gstatic.com",
-    "frame-src 'self'",
+    "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com",
   ].join("; ");
 
   res.setHeader("Content-Security-Policy", csp);
@@ -47,8 +47,6 @@ app.use(express.json());
 // ----------
 
 app.use(express.static(distPath));
-const publicPath = resolve(__dirname, "../../dist");
-app.use(express.static(publicPath));
 
 // ----------
 // API routes
@@ -70,8 +68,8 @@ app.get("/", (_req, res) => {
 // 3️⃣ SPA fallback (production only)
 // ----------
 
-  app.get("*", (_req, res) => {
-    const indexPath = join(distPath, "dist/index.html");
+app.get("*", (_req, res) => {
+    const indexPath = join(distPath, "index.html");
     if (existsSync(indexPath)) {
       res.sendFile(indexPath);
     } else {

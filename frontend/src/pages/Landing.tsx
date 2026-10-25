@@ -93,10 +93,11 @@ export function Landing() {
       </div>
 
       <ConnectionCard>
-        <label className="text-xs font-medium uppercase tracking-widest text-muted">
+        <label htmlFor="display-name" className="text-xs font-medium uppercase tracking-widest text-muted">
           Enter your name
         </label>
         <input
+          id="display-name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Enter your name"
@@ -109,28 +110,30 @@ export function Landing() {
           </p>
         )}
 
-        {!sessionId ? (
+        <div className="mt-4 grid gap-4">
           <button
             onClick={create}
             disabled={creating}
-            className="mt-4 w-full rounded-xl bg-primary px-4 py-3 font-display text-sm font-bold text-[#13131B] transition hover:brightness-110 disabled:opacity-50"
+            className="w-full rounded-xl bg-primary px-4 py-3 font-display text-sm font-bold text-[#13131B] transition hover:brightness-110 disabled:opacity-50"
           >
             {creating ? "Creating..." : "Create Connection ID"}
           </button>
-        ) : (
-          <>
+          {sessionId && (
             <ConnectionId sessionId={sessionId} />
+          )}
+          <div>
             <div className="my-5 flex items-center gap-3 text-xs text-muted">
               <div className="h-px flex-1 bg-border" />
               <span>OR</span>
               <div className="h-px flex-1 bg-border" />
             </div>
 
-            <label className="text-xs font-medium uppercase tracking-widest text-muted">
+            <label htmlFor="remote-connection-id" className="text-xs font-medium uppercase tracking-widest text-muted">
               Enter remote peer connection ID
             </label>
             <div className="mt-2 flex gap-2">
               <input
+                id="remote-connection-id"
                 value={joinId}
                 onChange={(e) => setJoinId(e.target.value.toUpperCase())}
                 placeholder="7F3K-92LM"
@@ -144,8 +147,8 @@ export function Landing() {
                 Connect <ArrowRight size={15} />
               </button>
             </div>
-          </>
-        )}
+          </div>
+        </div>
 
         {sessionId && (
           <div className="mt-5">

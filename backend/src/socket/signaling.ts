@@ -27,15 +27,53 @@ interface CandidatePayload {
 
 interface WatchPayload {
   sessionId?: string;
-  action: "load" | "play" | "pause" | "seek" | "state" | "playlist-add" | "playlist-remove" | "playlist-play";
+  action: "load" | "play" | "pause" | "seek" | "state" | "sync" | "playlist-add" | "playlist-remove" | "playlist-play";
   videoId?: string;
   currentTime?: number;
+  isPlaying?: boolean;
   playlistIndex?: number;
+}
+
+const CREATE_LIMIT = 5;
+const CREATE_WINDOW_MS = 60_000;
+const createAttempts = new Map<string, number[]>();
+
+function canCreateSession(socket: Socket): boolean {
+  const key = socket.handshake.address;
+  const now = Date.now();
+  const attempts = (createAttempts.get(key) ?? []).filter((time) => now - time < CREATE_WINDOW_MS);
+  if (attempts.length >= CREATE_LIMIT) {
+    createAttempts.set(key, attempts);
+    return false;
+  }
+  attempts.push(now);
+  createAttempts.set(key, attempts);
+  return true;
+}
+
+function isSessionDescription(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && typeof (value as { type?: unknown }).type === "string" && typeof (value as { sdp?: unknown }).sdp === "string");
+}
+
+function isIceCandidate(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && typeof (value as { candidate?: unknown }).candidate === "string");
 }
 
 export function setupSignaling(io: Server, sessions: SessionManager): void {
   io.on("connection", (socket: Socket) => {
     socket.on("create-session", (payload: CreatePayload) => {
+      const existing = sessions.sessionOfSocket(socket.id);
+      if (existing) {
+        socket.emit("session-created", { sessionId: existing.id });
+        return;
+      }
+      if (!canCreateSession(socket)) {
+        socket.emit("session-error", {
+          reason: "invalid",
+          message: "Too many connection IDs created. Please wait a minute and try again.",
+        });
+        return;
+      }
       const name = payload?.name?.trim() ?? "";
       const session = sessions.create();
       console.log(`[Signaling] Session created: ${session.id} (by ${socket.id}) name="${name}"`);
@@ -63,6 +101,21 @@ export function setupSignaling(io: Server, sessions: SessionManager): void {
           message: "Please enter a valid connection ID.",
         });
         return;
+      }
+      const previous = sessions.sessionOfSocket(socket.id);
+      const target = sessions.get(sessionId);
+      if (!target || (target.peers.length >= 2 && !target.peers.includes(socket.id))) {
+        socket.emit("session-error", {
+          sessionId,
+          reason: target ? "full" : "invalid",
+          message: target ? "This session is already full." : "Session not found. Check the ID and try again.",
+        });
+        return;
+      }
+      if (previous && previous.id !== sessionId) {
+        sessions.removeSocket(socket.id);
+        socket.leave(previous.id);
+        socket.to(previous.id).emit("peer-left", { sessionId: previous.id, peerId: socket.id });
       }
       const result = sessions.addPeer(sessionId, socket.id, name || undefined);
       if (!result.ok) {
@@ -126,8 +179,9 @@ export function setupSignaling(io: Server, sessions: SessionManager): void {
     });
 
     socket.on("webrtc-offer", (payload: OfferPayload) => {
-      if (!payload?.sessionId || !payload.offer) return;
+      if (!payload?.sessionId || !isSessionDescription(payload.offer)) return;
       const sessionId = normalizeSessionId(payload.sessionId);
+      if (!sessions.isParticipant(sessionId, socket.id)) return;
       console.log(`[Signaling] Routing offer: ${sessionId} (from ${socket.id})`);
       socket.to(sessionId).emit("webrtc-offer", {
         sessionId,
@@ -137,8 +191,9 @@ export function setupSignaling(io: Server, sessions: SessionManager): void {
     });
 
     socket.on("webrtc-answer", (payload: AnswerPayload) => {
-      if (!payload?.sessionId || !payload.answer) return;
+      if (!payload?.sessionId || !isSessionDescription(payload.answer)) return;
       const sessionId = normalizeSessionId(payload.sessionId);
+      if (!sessions.isParticipant(sessionId, socket.id)) return;
       console.log(`[Signaling] Routing answer: ${sessionId} (from ${socket.id})`);
       socket.to(sessionId).emit("webrtc-answer", {
         sessionId,
@@ -148,8 +203,9 @@ export function setupSignaling(io: Server, sessions: SessionManager): void {
     });
 
     socket.on("ice-candidate", (payload: CandidatePayload) => {
-      if (!payload?.sessionId || !payload.candidate) return;
+      if (!payload?.sessionId || !isIceCandidate(payload.candidate)) return;
       const sessionId = normalizeSessionId(payload.sessionId);
+      if (!sessions.isParticipant(sessionId, socket.id)) return;
       console.log(`[Signaling] Routing ICE candidate: ${sessionId} (from ${socket.id})`);
       socket.to(sessionId).emit("ice-candidate", {
         sessionId,
@@ -159,15 +215,12 @@ export function setupSignaling(io: Server, sessions: SessionManager): void {
     });
 
     socket.on("leave-session", (payload: { sessionId?: string }) => {
-      const rawId = payload?.sessionId ?? "";
-      const sessionId = rawId ? normalizeSessionId(rawId) : undefined;
       const session = sessions.sessionOfSocket(socket.id);
-      const targetId = sessionId ?? session?.id;
-      if (targetId) {
-        console.log(`[Signaling] Peer left: ${targetId} (${socket.id})`);
-        socket.leave(targetId);
-        socket.to(targetId).emit("peer-left", {
-          sessionId: targetId,
+      if (session) {
+        console.log(`[Signaling] Peer left: ${session.id} (${socket.id})`);
+        socket.leave(session.id);
+        socket.to(session.id).emit("peer-left", {
+          sessionId: session.id,
           peerId: socket.id,
         });
       }
@@ -180,11 +233,30 @@ export function setupSignaling(io: Server, sessions: SessionManager): void {
       const sessionId = rawId ? normalizeSessionId(rawId) : undefined;
       if (!sessionId) return;
 
-      const session = sessions.get(sessionId);
-      if (!session) return;
+      if (!sessions.isParticipant(sessionId, socket.id)) return;
 
-      // Validate the peer is in this session
-      if (!session.peers.includes(socket.id)) return;
+      if (payload.action === "playlist-add" && payload.videoId) {
+        sessions.addToPlaylist(sessionId, { videoId: payload.videoId }, socket.id);
+      } else if (payload.action === "playlist-remove" && Number.isInteger(payload.playlistIndex)) {
+        sessions.removeFromPlaylist(sessionId, payload.playlistIndex!);
+      } else if (payload.action === "playlist-play" && Number.isInteger(payload.playlistIndex)) {
+        sessions.playPlaylistItem(sessionId, payload.playlistIndex!, socket.id);
+      } else {
+        const current = sessions.getWatchState(sessionId);
+        if (current) {
+          sessions.setWatchState(sessionId, {
+            videoId: payload.videoId ?? current.videoId,
+            currentTime: typeof payload.currentTime === "number" && payload.currentTime >= 0
+              ? payload.currentTime
+              : current.currentTime,
+            isPlaying: payload.action === "load"
+              ? false
+              : typeof payload.isPlaying === "boolean"
+                ? payload.isPlaying
+                : current.isPlaying,
+          }, socket.id);
+        }
+      }
 
       // Only route to the other peer
       socket.to(sessionId).emit("watch:sync", {

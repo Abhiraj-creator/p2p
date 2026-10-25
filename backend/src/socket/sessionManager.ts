@@ -1,14 +1,12 @@
 import type { Session, WatchState, WatchPlaylistItem } from "../types/signaling.js";
+import { randomBytes } from "crypto";
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const MAX_PEERS = 2;
 
 function randomSegment(length: number): string {
-  let out = "";
-  for (let i = 0; i < length; i++) {
-    out += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
-  }
-  return out;
+  const bytes = randomBytes(length);
+  return Array.from(bytes, (byte) => ALPHABET[byte % ALPHABET.length]).join("");
 }
 
 function createDefaultWatchState(): WatchState {
@@ -154,6 +152,10 @@ export class SessionManager {
     const id = this.socketToSession.get(socketId);
     if (!id) return undefined;
     return this.sessions.get(id);
+  }
+
+  isParticipant(sessionId: string, socketId: string): boolean {
+    return this.get(sessionId)?.peers.includes(socketId) ?? false;
   }
 
   peerOf(session: Session, excludeSocketId: string): string | undefined {

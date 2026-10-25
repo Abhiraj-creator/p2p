@@ -14,7 +14,7 @@ export function useMediaStream(): MediaState & {
   stop: () => void;
   toggleMic: () => void;
   toggleCamera: () => void;
-  switchCamera: () => Promise<void>;
+  switchCamera: () => Promise<MediaStreamTrack | null>;
 } {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [micOn, setMicOn] = useState(true);
@@ -159,7 +159,7 @@ export function useMediaStream(): MediaState & {
 
   const switchCamera = useCallback(async () => {
     const s = streamRef.current;
-    if (!s) return;
+    if (!s) return null;
 
     const nextFacing = facingMode === "user" ? "environment" : "user";
     let newStream: MediaStream | null = null;
@@ -192,6 +192,7 @@ export function useMediaStream(): MediaState & {
 
       // Replace the track in the existing stream (preserves audio)
       const oldVideoTracks = s.getVideoTracks();
+      oldVideoTracks.forEach((track) => s.removeTrack(track));
       s.addTrack(newVideoTrack);
 
       // Update facing mode and stream reference
@@ -203,6 +204,7 @@ export function useMediaStream(): MediaState & {
 
       // Clean up the temporary stream (audio tracks)
       newStream.getAudioTracks().forEach((t) => t.stop());
+      return newVideoTrack;
 
     } catch (err) {
       console.warn("Camera switch failed", err);
@@ -214,6 +216,7 @@ export function useMediaStream(): MediaState & {
       }
 
       // Keep current camera working - don't break existing stream
+      return null;
     }
   }, [facingMode, enumerateVideoDevices]);
 

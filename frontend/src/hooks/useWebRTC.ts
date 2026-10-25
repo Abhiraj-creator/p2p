@@ -57,9 +57,11 @@ export function useWebRTC({ socket, sessionId, isInitiator, localName, peerName 
   const managerRef = useRef<PeerConnectionManager | null>(null);
   const incomingRef = useRef(new Map<string, IncomingFile>());
   const cancelledRef = useRef(new Set<string>());
+  const blobUrlsRef = useRef(new Set<string>());
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteMediaRef = useRef(new MediaStream());
   const roleRef = useRef(isInitiator);
+  const offeringRef = useRef(false);
   roleRef.current = isInitiator;
 
   const updateTransfer = useCallback((fileId: string, patch: Partial<FileTransferState>) => {
@@ -81,6 +83,11 @@ export function useWebRTC({ socket, sessionId, isInitiator, localName, peerName 
           },
         ]);
       } else if (msg.kind === "file-start") {
+        if (
+          !msg.fileId || !Number.isSafeInteger(msg.size) || msg.size < 0 ||
+          msg.size > MAX_FILE_SIZE || incomingRef.current.size >= 3 ||
+          incomingRef.current.has(msg.fileId)
+        ) return;
         incomingRef.current.set(msg.fileId, {
           name: msg.name,
           size: msg.size,
@@ -114,6 +121,7 @@ export function useWebRTC({ socket, sessionId, isInitiator, localName, peerName 
             type: incoming.mimeType || "application/octet-stream",
           });
           const blobUrl = URL.createObjectURL(blob);
+          blobUrlsRef.current.add(blobUrl);
           incomingRef.current.delete(msg.fileId);
           updateTransfer(msg.fileId, {
             status: "completed",
@@ -125,6 +133,10 @@ export function useWebRTC({ socket, sessionId, isInitiator, localName, peerName 
           incomingRef.current.delete(msg.fileId);
           updateTransfer(msg.fileId, { status: "failed", error: "Could not assemble file." });
         }
+      } else if (msg.kind === "file-cancel") {
+        cancelledRef.current.add(msg.fileId);
+        incomingRef.current.delete(msg.fileId);
+        updateTransfer(msg.fileId, { status: "cancelled" });
       }
     },
     [updateTransfer],
@@ -154,6 +166,11 @@ export function useWebRTC({ socket, sessionId, isInitiator, localName, peerName 
           if (cancelledRef.current.has(fileId)) return;
           const incoming = incomingRef.current.get(fileId);
           if (!incoming) return;
+          if (incoming.received + chunk.byteLength > incoming.size) {
+            incomingRef.current.delete(fileId);
+            updateTransfer(fileId, { status: "failed", error: "Invalid file size." });
+            return;
+          }
           incoming.chunks.push(chunk);
           incoming.received += chunk.byteLength;
           const progress =
@@ -231,16 +248,12 @@ export function useWebRTC({ socket, sessionId, isInitiator, localName, peerName 
     [handleDataMessage],
   );
 
-  const lastOfferAt = useRef(0);
-
   const sendOffer = useCallback(async () => {
     const manager = managerRef.current;
     if (!manager) return;
     if (!roleRef.current) return;
-    // Throttle: re-join events can trigger duplicate offers; skip rapid repeats.
-    const now = Date.now();
-    if (now - lastOfferAt.current < 1000) return;
-    lastOfferAt.current = now;
+    if (offeringRef.current || manager.pc?.signalingState !== "stable") return;
+    offeringRef.current = true;
     try {
       // Role may have been learned from signaling after PC creation —
       // ensure initiator channels exist before offering.
@@ -253,6 +266,8 @@ export function useWebRTC({ socket, sessionId, isInitiator, localName, peerName 
       console.error("Failed to create offer", err);
       setError("Failed to start peer connection.");
       setConnectionState("failed");
+    } finally {
+      offeringRef.current = false;
     }
   }, [sessionId, socket, bindChannel]);
 
@@ -297,20 +312,6 @@ export function useWebRTC({ socket, sessionId, isInitiator, localName, peerName 
     manager.onChannelOpen = () => setChannelOpen(true);
 
     const pc = manager.create(roleRef.current);
-    pc.onnegotiationneeded = () => {
-      // Only the initiator renegotiates to avoid glare.
-      if (!roleRef.current) return;
-      if (!pc.localDescription) return;
-      void (async () => {
-        try {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          socket.emit("webrtc-offer", { sessionId, offer });
-        } catch (err) {
-          console.warn("Renegotiation failed", err);
-        }
-      })();
-    };
 
     // Attach any existing local stream (media is optional — DataChannel works without it)
     if (localStreamRef.current) {
@@ -399,6 +400,9 @@ export function useWebRTC({ socket, sessionId, isInitiator, localName, peerName 
       socket.off("peer-left", onPeerLeft);
       manager.cleanup("useWebRTC-effect-cleanup");
       managerRef.current = null;
+      incomingRef.current.clear();
+      for (const url of blobUrlsRef.current) URL.revokeObjectURL(url);
+      blobUrlsRef.current.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, socket]);
@@ -422,19 +426,9 @@ export function useWebRTC({ socket, sessionId, isInitiator, localName, peerName 
           }
         }
       }
-      if (added && pc.localDescription && pc.remoteDescription) {
-        void (async () => {
-          try {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            socket.emit("webrtc-offer", { sessionId, offer });
-          } catch (err) {
-            console.warn("Renegotiation after adding tracks failed", err);
-          }
-        })();
-      }
+      if (added && pc.localDescription && pc.remoteDescription) void sendOffer();
     },
-    [sessionId, socket],
+    [sendOffer],
   );
 
   const replaceVideoTrack = useCallback(
@@ -497,7 +491,7 @@ export function useWebRTC({ socket, sessionId, isInitiator, localName, peerName 
         return;
       }
       if (file.size > MAX_FILE_SIZE) {
-        setError("File is too large (max 1 GB).");
+        setError("File is too large (max 100 MB).");
         return;
       }
       const fileId = createFileId();
@@ -548,6 +542,11 @@ export function useWebRTC({ socket, sessionId, isInitiator, localName, peerName 
   const cancelTransfer = useCallback(
     (fileId: string) => {
       cancelledRef.current.add(fileId);
+      const channel = managerRef.current?.fileChannel;
+      if (channel?.readyState === "open") {
+        channel.send(JSON.stringify({ kind: "file-cancel", fileId }));
+      }
+      incomingRef.current.delete(fileId);
       updateTransfer(fileId, { status: "cancelled" });
     },
     [updateTransfer],

@@ -70,13 +70,8 @@ export function Communication() {
   }, []);
 
   const handleSwitchCamera = useCallback(async () => {
-    await media.switchCamera();
-    if (media.stream) {
-      const videoTrack = media.stream.getVideoTracks()[0];
-      if (videoTrack) {
-        await peer.replaceVideoTrack(videoTrack);
-      }
-    }
+    const videoTrack = await media.switchCamera();
+    if (videoTrack) await peer.replaceVideoTrack(videoTrack);
   }, [media, peer]);
 
   const handleWatchTogether = useCallback(() => {
@@ -133,18 +128,6 @@ export function Communication() {
       socket.off("peer-left", onPeerLeft);
     };
   }, [sessionId, socket, localName]);
-
-  // Offer retry
-  useEffect(() => {
-    if (!joined || !effectiveInitiator) return;
-    if (peer.channelOpen) return;
-    const fire = () => {
-      void sendOfferRef.current();
-    };
-    fire();
-    const id = window.setInterval(fire, 2500);
-    return () => window.clearInterval(id);
-  }, [joined, effectiveInitiator, peer.channelOpen, peer.connectionState, sessionId]);
 
   // Start local media once
   useEffect(() => {

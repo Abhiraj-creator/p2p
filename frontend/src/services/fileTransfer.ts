@@ -1,6 +1,6 @@
 export const CHUNK_SIZE = 16 * 1024; // 16 KB
 export const MAX_BUFFERED = 1024 * 1024; // 1 MB backpressure threshold
-export const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1 GB guard
+export const MAX_FILE_SIZE = 100 * 1024 * 1024; // Buffered in memory by the receiving browser.
 
 export function encodeChunk(fileId: string, chunk: ArrayBuffer): ArrayBuffer {
   const idBytes = new TextEncoder().encode(fileId);
@@ -13,8 +13,10 @@ export function encodeChunk(fileId: string, chunk: ArrayBuffer): ArrayBuffer {
 }
 
 export function decodeChunk(buffer: ArrayBuffer): { fileId: string; chunk: ArrayBuffer } {
+  if (buffer.byteLength < 2) throw new Error("Invalid file chunk");
   const view = new DataView(buffer);
   const idLen = view.getUint16(0);
+  if (idLen === 0 || idLen + 2 > buffer.byteLength) throw new Error("Invalid file chunk");
   const idBytes = new Uint8Array(buffer, 2, idLen);
   const fileId = new TextDecoder().decode(idBytes);
   const chunk = buffer.slice(2 + idLen);
