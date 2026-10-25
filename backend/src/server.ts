@@ -21,11 +21,11 @@ const app = express();
 app.use((_req, res, next) => {
   const csp = [
     "default-src 'self'",
-    "connect-src 'self' http://localhost:5001", // <-- matches new PORT
+    "connect-src 'self' http://localhost:5001 http://localhost:5000 https://p2p-ivac.onrender.com ws://p2p-ivac.onrender.com ws://localhost:5000 ws://localhost:5001",
     "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data:",
-    "font-src 'self'",
+    "font-src 'self' https://fonts.gstatic.com",
     "frame-src 'self'",
   ].join("; ");
 
@@ -45,10 +45,9 @@ app.use(express.json());
 // ----------
 // 2️⃣ Serve static assets (including .well‑known)
 // ----------
-if (env.nodeEnv === "production") {
-  app.use(express.static(distPath));
-}
-const publicPath = resolve(__dirname, "../../public");
+
+app.use(express.static(distPath));
+const publicPath = resolve(__dirname, "../../dist");
 app.use(express.static(publicPath));
 
 // ----------
@@ -59,22 +58,26 @@ app.get("/health", (_req, res) => {
 });
 
 app.get("/", (_req, res) => {
-  res.send("hello world");
+  const indexPath = join(distPath, "index.html");
+  if (existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).send("Index not found");
+  }
 });
 
 // ----------
 // 3️⃣ SPA fallback (production only)
 // ----------
-if (env.nodeEnv === "production") {
+
   app.get("*", (_req, res) => {
-    const indexPath = join(distPath, "index.html");
+    const indexPath = join(distPath, "dist/index.html");
     if (existsSync(indexPath)) {
       res.sendFile(indexPath);
     } else {
       res.status(500).send("Frontend not built. Check build output.");
     }
   });
-}
 
 // ----------
 // Error handling & server start
