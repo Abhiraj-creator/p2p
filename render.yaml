@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: p2p-connect
+    runtime: node
+    plan: free
+    buildCommand: npm run render-build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NPM_CONFIG_PRODUCTION
+        value: "false"
+      # PORT is automatically provided by Render
+      # CLIENT_URL: set to your actual Render URL after first deploy (e.g., https://p2p-connect-xyz.onrender.com)
+    healthCheckPath: /health
