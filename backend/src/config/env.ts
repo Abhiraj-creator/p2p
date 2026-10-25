@@ -11,7 +11,7 @@ function requireEnv(name: string, fallback?: string): string {
 }
 
 export const env = {
-  port: Number(requireEnv("PORT", "5000")),
+  port: Number(requireEnv("PORT", "5001")),
   clientUrl: requireEnv("CLIENT_URL", "http://localhost:5173"),
   nodeEnv: requireEnv("NODE_ENV", "development"),
 };

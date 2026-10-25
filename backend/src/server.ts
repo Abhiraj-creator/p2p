@@ -15,55 +15,56 @@ const __dirname = dirname(__filename);
 const distPath = resolve(__dirname, "../../frontend/dist");
 
 const app = express();
+// -----------------------
+// 1️⃣ CSP middleware – allow local dev connections
+// -----------------------
+app.use((_req, res, next) => {
+  const csp = [
+    "default-src 'self'",
+    "connect-src 'self' http://localhost:5001", // <-- matches new PORT
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "frame-src 'self'",
+  ].join("; ");
+
+  res.setHeader("Content-Security-Policy", csp);
+  next();
+});
+
 
 app.use(
   cors({
     origin: env.clientUrl,
     methods: ["GET", "POST"],
-  }),
+  })
 );
 app.use(express.json());
 
-// Serve frontend static files in production
+// ----------
+// 2️⃣ Serve static assets (including .well‑known)
+// ----------
 if (env.nodeEnv === "production") {
   app.use(express.static(distPath));
 }
-
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "p2p-connect-signaling" });
-});
-app.get('/', (_req, res) => {
-  res.send('hello world')
-})
-
-// Serve everything under ./public (including .well-known)
 const publicPath = resolve(__dirname, "../../public");
 app.use(express.static(publicPath));
 
-// Now the request to http://localhost:5000/.well-known/... works automatically.
-
-// ------------------------------------------------
-// CSP middleware – allow local dev connections
-// ------------------------------------------------
-app.use((_req, res, next) => {
-  const csp = [
-    "default-src 'self'",
-    // allow fetch/XHR to the dev server
-    "connect-src 'self' http://localhost:5000",
-    // allow scripts, styles, images from self
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
-    // optional: allow fonts, websockets, etc.
-    "font-src 'self'",
-    "frame-src 'self'",
-  ].join('; ');
-
-  res.setHeader('Content-Security-Policy', csp);
-  next();
+// ----------
+// API routes
+// ----------
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok", service: "p2p-connect-signaling" });
 });
 
-// Catch-all: serve index.html for SPA routes (production only)
+app.get("/", (_req, res) => {
+  res.send("hello world");
+});
+
+// ----------
+// 3️⃣ SPA fallback (production only)
+// ----------
 if (env.nodeEnv === "production") {
   app.get("*", (_req, res) => {
     const indexPath = join(distPath, "index.html");
@@ -75,10 +76,12 @@ if (env.nodeEnv === "production") {
   });
 }
 
+// ----------
+// Error handling & server start
+// ----------
 app.use(errorHandler);
 
 const httpServer = createServer(app);
-
 const io = new Server(httpServer, {
   cors: {
     origin: env.clientUrl,
@@ -92,5 +95,7 @@ const sessions = new SessionManager();
 setupSignaling(io, sessions);
 
 httpServer.listen(env.port, () => {
-  console.log(`[signaling] listening on :${env.port} (client: ${env.clientUrl})`);
+  console.log(
+    `[signaling] listening on :${env.port} (client: ${env.clientUrl})`
+  );
 });
