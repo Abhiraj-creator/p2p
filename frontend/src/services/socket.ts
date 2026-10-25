@@ -5,9 +5,9 @@ let socketInstance: Socket | null = null;
 export function getSignalingUrl(): string {
   const url = import.meta.env.VITE_SIGNALING_URL as string | undefined;
   if (url) return url;
-  // In production (served from same origin as backend), use relative URL
-  if (import.meta.env.PROD) return "";
-  return "http://localhost:5000";
+  // Always use relative URL so the socket connects to whatever host
+  // served the page — works on desktop, mobile, and any deployed host.
+  return "";
 }
 
 export function createSocket(): Socket {
