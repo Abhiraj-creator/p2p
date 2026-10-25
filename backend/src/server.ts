@@ -32,7 +32,9 @@ if (env.nodeEnv === "production") {
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "p2p-connect-signaling" });
 });
-
+app.get('/',(_req,res)=>{
+  res.send('hello world')
+})
 // Catch-all: serve index.html for SPA routes (production only)
 if (env.nodeEnv === "production") {
   app.get("*", (_req, res) => {
